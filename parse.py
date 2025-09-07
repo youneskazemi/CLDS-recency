@@ -22,12 +22,6 @@ def parse_args():
     )
     parser.add_argument("--epochs", type=int, default=10000)
     parser.add_argument(
-        "--half_life_days",
-        type=float,
-        default=90.0,
-        help="Exponential decay half-life in days for interaction edges.",
-    )
-    parser.add_argument(
         "--time_bucket_days",
         type=int,
         default=30,

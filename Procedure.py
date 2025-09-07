@@ -119,4 +119,5 @@ def Test(dataset, Recmodel, epoch, cold=False, w=None):
         results["precision"] /= float(len(users))
         results["ndcg"] /= float(len(users))
         print(results)
+        print(f"[Eval] recency_months={recency_months}, users={len(users)}")
         return results

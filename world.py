@@ -18,7 +18,7 @@ if not os.path.exists(FILE_PATH):
     os.makedirs(FILE_PATH, exist_ok=True)
 
 config = {}
-all_dataset = ["lastfm", "ciao", "douban"]
+all_dataset = ["lastfm", "lastfm_small", "ciao", "douban"]
 all_models = ["bpr", "LightGCN", "CLDS"]
 
 config["layer"] = args.layer
@@ -46,7 +46,7 @@ if dataset not in all_dataset:
 if model_name not in all_models:
     raise NotImplementedError(f"Haven't supported {model_name} yet!, try {all_models}")
 
-n_list = {"lastfm": 1892, "ciao": 7375, "douban": 2848}
+n_list = {"lastfm": 1892, "lastfm_small": 300, "ciao": 7375, "douban": 2848}
 try:
     n_node = n_list[dataset]
 except:

@@ -16,7 +16,7 @@ if world.dataset in [
     "gowalla",
 ]:
 
-    if world.model_name in ["CLDS", "TCDLS"]:
+    if world.model_name in ["CLDS", "TCLDS"]:
         dataset = dataloader.SocialGraphDataset(world.dataset)
     elif world.model_name in ["LightGCN"]:
         dataset = dataloader.GraphDataset(world.dataset)

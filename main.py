@@ -43,7 +43,7 @@ try:
         print("======================")
         print(f"EPOCH[{epoch}/{world.TRAIN_epochs}]")
 
-        if epoch > 50 and (epoch % 10 == 1 or epoch == world.TRAIN_epochs):
+        if epoch > 200 and (epoch % 50 == 1 or epoch == world.TRAIN_epochs):
             print("[TEST]")
             results = Procedure.Test(dataset, Recmodel, epoch, False)
             # results_cold = Procedure.Test(dataset, Recmodel, epoch, True)

@@ -396,82 +396,84 @@ class GraphDataset:
     def getInteractionGraph(self):
         print("loading adjacency matrix")
         if self.interactionGraph is None:
+            # ---- cache key depends on decay settings ----
+            use_decay = bool(world.config.get("edge_time_decay", 0))
+            hl_days = float(world.config.get("half_life_days", 90.0))
+            decay_tag = "plain" if not use_decay else f"decay_hl{int(round(hl_days))}"
+            p1 = f"./data/preprocessed/{self.src}/interaction_adj1_mat__{decay_tag}.npz"
+            p2 = f"./data/preprocessed/{self.src}/interaction_adj2_mat__{decay_tag}.npz"
+
             try:
-                decay_tag = (
-                    "decay" if world.config.get("edge_time_decay", 0) else "plain"
-                )
-                pre_adj_mat = sp.load_npz(
-                    f"./data/preprocessed/{self.src}/interaction_adj1_mat__{decay_tag}.npz"
-                )
-                pre_adj_mat2 = sp.load_npz(
-                    f"./data/preprocessed/{self.src}/interaction_adj2_mat__{decay_tag}.npz"
-                )
-                print("successfully loaded...")
+                pre_adj_mat = sp.load_npz(p1)
+                pre_adj_mat2 = sp.load_npz(p2)
+                print(f"successfully loaded cached adjacencies [{decay_tag}]")
                 norm_adj = pre_adj_mat
-                norm2_adj = pre_adj_mat2
+                norm2_adj = pre_adj_mat2  # important: use the second precomputed matrix
             except IOError:
-                print("generating adjacency matrix")
+                print(f"generating adjacency matrix [{decay_tag}]")
                 start = time()
 
+                # big (U+I) x (U+I) adjacency
                 adj_mat = sp.dok_matrix(
                     (self.n_user + self.m_item, self.n_user + self.m_item),
                     dtype=np.float32,
-                )
-                adj_mat = adj_mat.tolil()
+                ).tolil()
+                # co-occurrence (block-diagonal) adjacency
                 adj2_mat = sp.dok_matrix(
                     (self.n_user + self.m_item, self.n_user + self.m_item),
                     dtype=np.float32,
-                )
-                adj2_mat = adj2_mat.tolil()
+                ).tolil()
+
+                # R is (U x I); already weighted if edge_time_decay=1
                 R = self.UserItemNet.tolil()
-                U_U = R.dot(R.T)
-                I_I = R.T.dot(R)
+                U_U = R.dot(R.T)  # user-user
+                I_I = R.T.dot(R)  # item-item
+
                 print("u_u is", U_U.shape)
                 print("i_i is", I_I.shape)
                 print("n_user", self.n_user)
                 print("adj_mat", adj_mat.shape)
 
+                # Fill bi-partite adjacency
                 adj_mat[: self.n_user, self.n_user :] = R
                 adj_mat[self.n_user :, : self.n_user] = R.T
                 adj_mat = adj_mat.todok()
 
+                # Fill co-occurrence adjacency (block-diagonal)
                 adj2_mat[: self.n_user, : self.n_user] = U_U
                 adj2_mat[self.n_user :, self.n_user :] = I_I
                 adj2_mat = adj2_mat.todok()
 
-                rowsum = np.array(adj_mat.sum(axis=1))  # D
-                d_inv = np.power(rowsum, -0.5).flatten()  # D^-0.5
+                # Normalize A with D^{-1/2} A D^{-1/2}
+                rowsum = np.array(adj_mat.sum(axis=1))
+                d_inv = np.power(rowsum, -0.5).flatten()
                 d_inv[np.isinf(d_inv)] = 0.0
                 d_mat = sp.diags(d_inv)
 
-                rowsum2 = np.array(adj2_mat.sum(axis=1))  # D
-                d2_inv = np.power(rowsum2, -0.5).flatten()  # D^-0.5
-                d2_inv[np.isinf(d2_inv)] = 0.0
-                d2_mat = sp.diags(d2_inv)
-
-                # D^-0.5 * A * D^-0.5
                 norm_adj = d_mat.dot(adj_mat)
                 norm_adj = norm_adj.dot(d_mat)
                 norm_adj = norm_adj.tocsr()
 
-                norm2_adj = d_mat.dot(adj2_mat)
+                # Normalize co-occurrence with its own D^{-1/2} on both sides
+                rowsum2 = np.array(adj2_mat.sum(axis=1))
+                d2_inv = np.power(rowsum2, -0.5).flatten()
+                d2_inv[np.isinf(d2_inv)] = 0.0
+                d2_mat = sp.diags(d2_inv)
+
+                norm2_adj = d2_mat.dot(adj2_mat)
                 norm2_adj = norm2_adj.dot(d2_mat)
                 norm2_adj = norm2_adj.tocsr()
+
                 print(f"costing {time() - start}s, saved norm_mat...")
-                sp.save_npz(
-                    f"./data/preprocessed/{self.src}/interaction_adj1_mat__{decay_tag}.npz",
-                    norm_adj,
-                )
-                sp.save_npz(
-                    f"./data/preprocessed/{self.src}/interaction_adj2_mat__{decay_tag}.npz",
-                    norm2_adj,
-                )
+                sp.save_npz(p1, norm_adj)
+                sp.save_npz(p2, norm2_adj)
 
             self.interactionGraph = _convert_sp_mat_to_sp_tensor(norm_adj)
             self.interactionGraph = self.interactionGraph.coalesce().to(world.device)
 
             self.interactionGraph2 = _convert_sp_mat_to_sp_tensor(norm2_adj)
             self.interactionGraph2 = self.interactionGraph2.coalesce().to(world.device)
+
         return self.interactionGraph, self.interactionGraph2
 
     def _getInteractionDic(self):

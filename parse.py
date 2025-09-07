@@ -21,6 +21,32 @@ def parse_args():
         help="the batch size for bpr loss training procedure",
     )
     parser.add_argument("--epochs", type=int, default=10000)
+    parser.add_argument(
+        "--half_life_days",
+        type=float,
+        default=90.0,
+        help="Exponential decay half-life in days for interaction edges.",
+    )
+    parser.add_argument(
+        "--time_bucket_days",
+        type=int,
+        default=30,
+        help="Bin size for user/item time embeddings.",
+    )
+
+    parser.add_argument(
+        "--edge_time_decay",
+        type=int,
+        choices=[0, 1],
+        default=0,
+        help="If 1, weight user–item edges by exponential time decay (train graph).",
+    )
+    parser.add_argument(
+        "--half_life_days",
+        type=float,
+        default=90.0,
+        help="Half-life (days) for edge time decay when enabled.",
+    )
     # for deep model
     parser.add_argument("--layer", type=int, default=3, help="the layer num of graphs")
     # normally unchanged

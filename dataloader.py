@@ -48,8 +48,50 @@ class PairDataset:
 
         # build (users,items), bipartite graph
         self.interactionGraph = None
+
+        # === Temporal edge weights (train only) ===
+        ts_col = "time" if "time" in self.train_set.columns else None
+        if ts_col is None:
+            # fallback: original unweighted graph
+            edge_vals = np.ones(len(self.train_set), dtype=np.float32)
+        else:
+            now_ts = int(max(self.train_set[ts_col].max(), self.test_set[ts_col].max()))
+            half_life_days = float(world.config.get("half_life_days", 90.0))
+            half_life_secs = half_life_days * 24 * 3600.0
+            ages = now_ts - self.train_set[ts_col].to_numpy(dtype="int64")
+            edge_vals = np.exp(-np.log(2.0) * (ages / half_life_secs)).astype(
+                np.float32
+            )
+            # avoid all-zero rows/cols by flooring very tiny weights
+            edge_vals = np.clip(edge_vals, 1e-6, None)
+
+            # === Option: time-decayed edge weights on the train graph ===
+        use_decay = bool(world.config.get("edge_time_decay", 0))
+        has_time = "time" in self.train_set.columns
+        if use_decay and has_time:
+            now_ts = int(
+                max(
+                    self.train_set["time"].max(),
+                    (
+                        self.test_set["time"].max()
+                        if "time" in self.test_set.columns
+                        else self.train_set["time"].max()
+                    ),
+                )
+            )
+            half_life_days = float(world.config.get("half_life_days", 90.0))
+            half_life_secs = max(1.0, half_life_days * 24 * 3600.0)
+            ages = now_ts - self.train_set["time"].to_numpy(dtype="int64")
+            edge_vals = np.exp(-np.log(2.0) * (ages / half_life_secs)).astype(
+                np.float32
+            )
+            # avoid exact zeros so rows/cols don't vanish
+            edge_vals = np.clip(edge_vals, 1e-6, None)
+        else:
+            edge_vals = np.ones(len(self.train_set), dtype=np.float32)
+
         self.UserItemNet = csr_matrix(
-            (np.ones(len(self.train_set)), (self.trainUser, self.trainItem)),
+            (edge_vals, (self.trainUser, self.trainItem)),
             shape=(self.n_user, self.m_item),
         )
         #  user's history interacted items
@@ -199,6 +241,32 @@ class GraphDataset:
         self._max_ts = self.__compute_max_ts(
             self.train_set, self.test_set, self._ts_col
         )
+
+        # === Build user/item time buckets for node embeddings ===
+        self.user_time_bucket = None
+        self.item_time_bucket = None
+        if self._ts_col is not None and self._max_ts is not None:
+            # last activity per user / item (consider both train+test)
+            all_df = pd.concat([self.train_set, self.test_set], ignore_index=True)
+            last_user = all_df.groupby("user")[self._ts_col].max()
+            last_item = all_df.groupby("item")[self._ts_col].max()
+            # compute age in days relative to max_ts
+            u_age_days = (self._max_ts - last_user).astype("int64") / (24 * 3600)
+            i_age_days = (self._max_ts - last_item).astype("int64") / (24 * 3600)
+            bucket_days = int(world.config.get("time_bucket_days", 30))
+            u_bucket = np.floor(u_age_days / bucket_days).astype(int)
+            i_bucket = np.floor(i_age_days / bucket_days).astype(int)
+            # store as dense arrays indexed by id
+            self.user_time_bucket = np.zeros(self.n_user, dtype=int)
+            self.user_time_bucket[last_user.index.to_numpy()] = u_bucket.to_numpy()
+            self.item_time_bucket = np.zeros(self.m_item, dtype=int)
+            self.item_time_bucket[last_item.index.to_numpy()] = i_bucket.to_numpy()
+            # Optional cap to avoid huge embedding tables
+            self.max_time_bucket = int(
+                max(self.user_time_bucket.max(), self.item_time_bucket.max(), 0)
+            )
+        else:
+            self.max_time_bucket = 0
         # dict
         self._userDic, self._itemDic = self._getInteractionDic()
 
@@ -329,15 +397,17 @@ class GraphDataset:
         print("loading adjacency matrix")
         if self.interactionGraph is None:
             try:
+                decay_tag = (
+                    "decay" if world.config.get("edge_time_decay", 0) else "plain"
+                )
                 pre_adj_mat = sp.load_npz(
-                    f"./data/preprocessed/{self.src}/interaction_adj1_mat.npz"
+                    f"./data/preprocessed/{self.src}/interaction_adj1_mat__{decay_tag}.npz"
                 )
                 pre_adj_mat2 = sp.load_npz(
-                    f"./data/preprocessed/{self.src}/interaction_adj2_mat.npz"
+                    f"./data/preprocessed/{self.src}/interaction_adj2_mat__{decay_tag}.npz"
                 )
                 print("successfully loaded...")
                 norm_adj = pre_adj_mat
-                # norm2_adj = pre_adj_mat duplicated?
                 norm2_adj = pre_adj_mat2
             except IOError:
                 print("generating adjacency matrix")
@@ -389,10 +459,11 @@ class GraphDataset:
                 norm2_adj = norm2_adj.tocsr()
                 print(f"costing {time() - start}s, saved norm_mat...")
                 sp.save_npz(
-                    f"./data/preprocessed/{self.src}/interaction_adj1_mat.npz", norm_adj
+                    f"./data/preprocessed/{self.src}/interaction_adj1_mat__{decay_tag}.npz",
+                    norm_adj,
                 )
                 sp.save_npz(
-                    f"./data/preprocessed/{self.src}/interaction_adj2_mat.npz",
+                    f"./data/preprocessed/{self.src}/interaction_adj2_mat__{decay_tag}.npz",
                     norm2_adj,
                 )
 

@@ -19,7 +19,7 @@ if not os.path.exists(FILE_PATH):
 
 config = {}
 all_dataset = ["lastfm", "lastfm_small", "ciao", "douban"]
-all_models = ["bpr", "LightGCN", "CLDS"]
+all_models = ["bpr", "LightGCN", "CLDS", "TCLDS"]
 
 config["layer"] = args.layer
 
@@ -31,6 +31,12 @@ config["decay"] = args.decay
 
 config["test_u_batch_size"] = args.testbatch
 config["recency_months"] = args.recency_months
+
+config["half_life_days"] = args.half_life_days
+config["time_bucket_days"] = args.time_bucket_days
+
+config["edge_time_decay"] = args.edge_time_decay
+config["half_life_days"] = args.half_life_days
 
 
 GPU = torch.cuda.is_available()

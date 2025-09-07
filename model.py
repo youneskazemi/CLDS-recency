@@ -304,3 +304,163 @@ class item_comb(nn.Module):
         output = self.comb(torch.cat((h1, h2), dim=1))
         output = output / output.norm(2)
         return output
+
+
+class TCLDS(CLDS):
+    """
+    Time-aware CLDS:
+    - Adds user/item time embeddings (bucketed by last activity)
+    - Injects them into node features before propagation
+    """
+
+    def _init_weight(self):
+        # initialize exactly like CLDS
+        super(TCLDS, self)._init_weight()
+
+        # add temporal embedding tables
+        max_bucket = getattr(self.dataset, "max_time_bucket", 0)
+        if max_bucket < 0:
+            max_bucket = 0
+        self.time_user_emb = torch.nn.Embedding(
+            num_embeddings=max_bucket + 1, embedding_dim=self.latent_dim
+        )
+        self.time_item_emb = torch.nn.Embedding(
+            num_embeddings=max_bucket + 1, embedding_dim=self.latent_dim
+        )
+        if max_bucket > 0:
+            nn.init.normal_(self.time_user_emb.weight, std=0.1)
+            nn.init.normal_(self.time_item_emb.weight, std=0.1)
+
+    def computer(self, epoch):
+        # identical to CLDS.computer, but we inject time embeddings
+        A = self.interactionGraph
+        A2 = self.interactionGraph2
+
+        if epoch < 2000:
+            users_emb = self.embedding_user.weight
+            items_emb = self.embedding_item.weight
+
+            # ---- time embedding injection (safe if buckets missing) ----
+            try:
+                u_b = getattr(self.dataset, "user_time_bucket", None)
+                i_b = getattr(self.dataset, "item_time_bucket", None)
+                if (
+                    u_b is not None
+                    and i_b is not None
+                    and len(u_b) > 0
+                    and len(i_b) > 0
+                ):
+                    u_b = torch.tensor(u_b, dtype=torch.long, device=users_emb.device)
+                    i_b = torch.tensor(i_b, dtype=torch.long, device=items_emb.device)
+                    users_emb = users_emb + self.time_user_emb(u_b)
+                    items_emb = items_emb + self.time_item_emb(i_b)
+            except Exception:
+                pass
+            # ------------------------------------------------------------
+
+            all_emb = torch.cat([users_emb, items_emb])
+
+            S1 = self.socialGraph1  # user * user
+            embs = [all_emb]
+            for layer in range(self.n_layers):
+                if layer == 0:
+                    all_emb_interaction = torch.sparse.mm(A, all_emb)
+                else:
+                    all_emb_interaction = torch.sparse.mm(A2, all_emb)
+                users_emb_interaction, items_emb_next = torch.split(
+                    all_emb_interaction, [self.num_users, self.num_items]
+                )
+                users_emb_next = torch.tanh(self.social_i(users_emb_interaction))
+                all_emb = torch.cat([users_emb_next, items_emb_next])
+
+                users_emb_social = torch.sparse.mm(
+                    S1, users_emb
+                )  # NOTE: uses (time-aware) users_emb
+                users_emb = torch.tanh(self.social_c(users_emb_social))
+
+                users = self.social_s(torch.cat([users_emb_next, users_emb], dim=1))
+                users = users / users.norm(2)
+                embs.append(torch.cat([users, items_emb_next]))
+            embs = torch.stack(embs, dim=1)
+            final_embs = torch.mean(embs, dim=1)
+            users, items = torch.split(final_embs, [self.num_users, self.num_items])
+            self.final_user, self.final_item = users, items
+
+            # keep CLDS behavior
+            self.embedding_user1.weight.data.copy_(users.detach())
+            return users, items, 0, 0
+
+        # epoch >= 2000 branch: keep CLDS logic as-is, but seed with time-aware users_emb on first step
+        items_emb = self.embedding_item.weight
+        users1_emb = self.embedding_user1.weight
+        users2_emb = self.embedding_user2.weight
+
+        # (optional) inject time embeddings into initial users1/users2
+        try:
+            u_b = getattr(self.dataset, "user_time_bucket", None)
+            if u_b is not None and len(u_b) > 0:
+                u_b = torch.tensor(u_b, dtype=torch.long, device=items_emb.device)
+                add = self.time_user_emb(u_b)
+                users1_emb = users1_emb + add
+                users2_emb = users2_emb + add
+        except Exception:
+            pass
+
+        users_emb = (users1_emb + users2_emb) / 2
+        all_emb = torch.cat([users_emb, items_emb])
+
+        S1 = self.socialGraph2
+        S2 = self.socialGraph2
+
+        a, b = list(range(world.n_node)), list(range(world.n_node))
+        np.random.shuffle(a)
+        np.random.shuffle(b)
+        shuffle_index1, shuffle_index2 = torch.tensor(a), torch.tensor(b)
+        users1_neg = users1_emb[shuffle_index1]
+        users2_neg = users2_emb[shuffle_index2]
+
+        embs = [all_emb]
+        logits_true, logits_false = [], []
+        for layer in range(self.n_layers):
+            if layer == 0:
+                all_emb_interaction = torch.sparse.mm(A, all_emb)
+            else:
+                all_emb_interaction = torch.sparse.mm(A2, all_emb)
+
+            users_emb_interaction, items_emb_next = torch.split(
+                all_emb_interaction, [self.num_users, self.num_items]
+            )
+            users_emb_next = torch.tanh(self.social_i(users_emb_interaction))
+            all_emb = torch.cat([users_emb_next, items_emb_next])
+
+            users1_emb_social = torch.sparse.mm(S1, users1_emb)
+            users1_emb_social = torch.tanh(self.social_c(users1_emb_social))
+            users2_emb_social = torch.sparse.mm(S2, users2_emb)
+            users2_emb_social = torch.tanh(self.social_c(users2_emb_social))
+            users1_neg = torch.sparse.mm(S1, users1_neg)
+            users1_neg = torch.tanh(self.social_c(users1_neg))
+            users2_neg = torch.sparse.mm(S2, users2_neg)
+            users2_neg = torch.tanh(self.social_c(users2_neg))
+
+            c_1 = torch.mean(users1_emb_social, dim=0).expand_as(users1_emb_social)
+            c_2 = torch.mean(users2_emb_social, dim=0).expand_as(users2_emb_social)
+            sc_1 = self.f_k(users2_emb_social, c_1).T
+            sc_2 = self.f_k(users1_emb_social, c_2).T
+            sc_3 = self.f_k(users2_neg, c_1).T
+            sc_4 = self.f_k(users1_neg, c_2).T
+            logits_true.append(torch.cat((sc_1, sc_2), dim=1))
+            logits_false.append(torch.cat((sc_3, sc_4), dim=1))
+
+            users_emb = (users1_emb_social + users2_emb_social) / 2
+            users = self.social_s(torch.cat([users_emb_next, users_emb], dim=1))
+            users = users / users.norm(2)
+            embs.append(torch.cat([users, items_emb_next]))
+
+        embs = torch.stack(embs, dim=1)
+        logits_true.extend(logits_false)
+        logits = torch.stack(logits_true, dim=2).view(1, -1, 1).squeeze(2)
+
+        final_embs = torch.mean(embs, dim=1)
+        users, items = torch.split(final_embs, [self.num_users, self.num_items])
+        self.final_user, self.final_item = users, items
+        return users, items, logits, 1

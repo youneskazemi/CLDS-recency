@@ -28,4 +28,5 @@ MODELS = {
     "bpr": model.PureBPR,
     "LightGCN": model.LightGCN,
     "CLDS": model.CLDS,
+    "TCLDS": model.TCLDS,
 }

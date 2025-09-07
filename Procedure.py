@@ -54,70 +54,83 @@ def test_one_batch(X):
 
 
 def Test(dataset, Recmodel, epoch, cold=False, w=None):
-    u_batch_size = world.config["test_u_batch_size"]  # 100
-    # dict
-    if cold:
-        testDict: dict = dataset.coldTestDict
-    else:
-        testDict: dict = dataset.testDict
+    # ensure integer batch size (your parse.py currently uses type=str)
+    try:
+        u_batch_size = int(world.config["test_u_batch_size"])
+    except Exception:
+        u_batch_size = 100
 
-    # dict (recency-aware)
+    # recency-aware ground truth
     recency_months = world.config.get("recency_months", 0)
     testDict: dict = dataset.get_eval_dict(recency_months=recency_months, cold=cold)
 
     Recmodel = Recmodel.eval()
-    max_K = max(world.topks)  # 20
+    max_K = max(world.topks)
+
     results = {
-        "precision": np.zeros(len(world.topks)),  # 2
-        "recall": np.zeros(len(world.topks)),  # 2
+        "precision": np.zeros(len(world.topks)),
+        "recall": np.zeros(len(world.topks)),
         "ndcg": np.zeros(len(world.topks)),
-    }  # 2
+    }
+
+    users = list(testDict.keys())
+    if len(users) == 0:
+        print(f"[Eval] recency_months={recency_months}, users=0 -> no eval (skip).")
+        return results
+
+    # keep batch size reasonable
+    max_reasonable = max(1, len(users) // 10)
+    if u_batch_size > max_reasonable:
+        print(
+            f"test_u_batch_size ({u_batch_size}) too big; shrinking to {max_reasonable}."
+        )
+        u_batch_size = max_reasonable
+
     with torch.no_grad():
-        users = list(testDict.keys())
-        try:
-            assert u_batch_size <= len(users) / 10
-        except AssertionError:
-            print(
-                f"test_u_batch_size is too big for this dataset, try a small one {len(users) // 10}"
-            )
         users_list = []
         rating_list = []
         groundTrue_list = []
+
         total_batch = len(users) // u_batch_size + 1
         for batch_users in utils.minibatch(users, batch_size=u_batch_size):
             allPos = dataset.getUserPosItems(batch_users)
             groundTrue = [testDict[u] for u in batch_users]
-            batch_users_gpu = torch.Tensor(batch_users).long()
-            batch_users_gpu = batch_users_gpu.to(world.device)
 
+            batch_users_gpu = torch.tensor(
+                batch_users, dtype=torch.long, device=world.device
+            )
             rating = Recmodel.getUsersRating(batch_users_gpu)
-            exclude_index = []
-            exclude_items = []
+
+            # exclude training positives
+            exclude_index, exclude_items = [], []
             for range_i, items in enumerate(allPos):
+                if len(items) == 0:
+                    continue
                 exclude_index.extend([range_i] * len(items))
                 exclude_items.extend(items)
+            if len(exclude_index) > 0:
+                rating[exclude_index, exclude_items] = -(1 << 10)
 
-            rating[exclude_index, exclude_items] = -(1 << 10)
             _, rating_K = torch.topk(rating, k=max_K)
             del rating
 
             users_list.append(batch_users)
-
             rating_list.append(rating_K.cpu())
-
             groundTrue_list.append(groundTrue)
+
         assert total_batch == len(users_list)
-        X = zip(rating_list, groundTrue_list)
-        pre_results = []
-        for x in X:  # rating_list[i]   groundTrue_list[i]
-            pre_results.append(test_one_batch(x))
-        for result in pre_results:
-            results["recall"] += result["recall"]
-            results["precision"] += result["precision"]
-            results["ndcg"] += result["ndcg"]
-        results["recall"] /= float(len(users))
-        results["precision"] /= float(len(users))
-        results["ndcg"] /= float(len(users))
+        pre_results = [test_one_batch(x) for x in zip(rating_list, groundTrue_list)]
+
+        for r in pre_results:
+            results["recall"] += r["recall"]
+            results["precision"] += r["precision"]
+            results["ndcg"] += r["ndcg"]
+
+        denom = float(len(users))
+        results["recall"] /= denom
+        results["precision"] /= denom
+        results["ndcg"] /= denom
+
         print(results)
         print(f"[Eval] recency_months={recency_months}, users={len(users)}")
         return results

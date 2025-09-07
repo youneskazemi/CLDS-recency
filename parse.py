@@ -26,7 +26,7 @@ def parse_args():
     # normally unchanged
     parser.add_argument("--topks", nargs="?", default="[10, 20]", help="@k test list")
     parser.add_argument(
-        "--testbatch", type=str, default=100, help="the batch size of users for testing"
+        "--testbatch", type=int, default=100, help="the batch size of users for testing"
     )
     parser.add_argument("--load", type=int, default=0)
     parser.add_argument("--seed", type=int, default=2020, help="random seed")

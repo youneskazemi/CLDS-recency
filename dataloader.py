@@ -235,19 +235,15 @@ class GraphDataset:
         return self._trainDataSize
 
     # ---------- NEW: recency-aware evaluation dict ----------
+
     def get_eval_dict(self, recency_months: int = 0, cold: bool = False):
-        """
-        Returns a {user: [items]} dict for evaluation.
-        If recency_months > 0 and timestamps exist, only keep interactions with
-        timestamp >= (max_ts - recency_months * 30d).
-        """
         if recency_months == 0 or self._ts_col is None or self._max_ts is None:
             return self._coldTestDic if cold else self._testDic
 
         cutoff = self._max_ts - recency_months * 30 * 24 * 60 * 60  # month≈30d
         df = self.test_set
         recent = df[df[self._ts_col] >= cutoff]
-        # Build dict {u:[items]} only with recent positives
+
         test_data = {}
         for i in range(len(recent)):
             u = int(recent["user"].iloc[i])
@@ -255,17 +251,13 @@ class GraphDataset:
             test_data.setdefault(u, []).append(it)
 
         if cold:
-            # Start from cold users (original policy: train interactions <=20)
-            cold_users = set()
             vc = self.train_set["user"].value_counts()
-            for u in test_data.keys():
-                if vc.get(u, 0) <= 20:
-                    cold_users.add(u)
+            cold_users = {u for u in test_data.keys() if int(vc.get(u, 0)) <= 20}
             test_data = {u: test_data[u] for u in cold_users if len(test_data[u]) > 0}
+            return test_data
         else:
-            # Drop users with empty recent positives
             test_data = {u: items for u, items in test_data.items() if len(items) > 0}
-        return test_data
+            return test_data
 
     # ---------- helpers ----------
     @staticmethod
@@ -345,7 +337,8 @@ class GraphDataset:
                 )
                 print("successfully loaded...")
                 norm_adj = pre_adj_mat
-                norm2_adj = pre_adj_mat
+                # norm2_adj = pre_adj_mat duplicated?
+                norm2_adj = pre_adj_mat2
             except IOError:
                 print("generating adjacency matrix")
                 start = time()

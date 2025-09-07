@@ -124,18 +124,20 @@ class PairDataset:
         return test_data
 
     def __build_cold_test(self):
+        # build test dict
         test_data = {}
-        for i in range(len(self.test_set)):
-            user = self.test_set["user"][i]
-            item = self.test_set["item"][i]
-            if test_data.get(user):
-                test_data[user].append(item)
-            else:
-                test_data[user] = [item]
-        for i in list(test_data.keys()):
-            if self.train_set["user"].value_counts()[i] > 20:
-                del test_data[i]
-        return test_data
+        for idx in range(len(self.test_set)):
+            u = int(self.test_set["user"].iloc[idx])
+            it = int(self.test_set["item"].iloc[idx])
+            test_data.setdefault(u, []).append(it)
+        # users with <=20 training interactions are "cold"
+        vc = self.train_set["user"].value_counts()
+        cold = {}
+        for u, items in test_data.items():
+            # safe lookup: default 0 if user not in training set
+            if int(vc.get(u, 0)) <= 20 and len(items) > 0:
+                cold[u] = items
+        return cold
 
     def _getInteractionDic(self):
         user_interaction = {}
@@ -316,18 +318,20 @@ class GraphDataset:
         return test_data
 
     def __build_cold_test(self):
+        # build test dict
         test_data = {}
-        for i in range(len(self.test_set)):
-            user = self.test_set["user"][i]
-            item = self.test_set["item"][i]
-            if test_data.get(user):
-                test_data[user].append(item)
-            else:
-                test_data[user] = [item]
-        for i in list(test_data.keys()):
-            if self.train_set["user"].value_counts()[i] > 20:
-                del test_data[i]
-        return test_data
+        for idx in range(len(self.test_set)):
+            u = int(self.test_set["user"].iloc[idx])
+            it = int(self.test_set["item"].iloc[idx])
+            test_data.setdefault(u, []).append(it)
+        # users with <=20 training interactions are "cold"
+        vc = self.train_set["user"].value_counts()
+        cold = {}
+        for u, items in test_data.items():
+            # safe lookup: default 0 if user not in training set
+            if int(vc.get(u, 0)) <= 20 and len(items) > 0:
+                cold[u] = items
+        return cold
 
     def getInteractionGraph(self):
         print("loading adjacency matrix")

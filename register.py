@@ -6,7 +6,15 @@ import model
 import world
 
 
-if world.dataset in ["lastfm", "lastfm_small", "ciao", "epinions", "douban", "gowalla"]:
+if world.dataset in [
+    "lastfm",
+    "lastfm_small_m0",
+    "lastfm_small_m6",
+    "ciao",
+    "epinions",
+    "douban",
+    "gowalla",
+]:
 
     if world.model_name in ["CLDS"]:
         dataset = dataloader.SocialGraphDataset(world.dataset)

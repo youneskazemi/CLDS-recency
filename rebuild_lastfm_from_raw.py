@@ -3,17 +3,19 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-RAW = Path("data/raw/lastfm")
-OUT = Path("data/preprocessed/lastfm_small")
-OUT.mkdir(parents=True, exist_ok=True)
 
 # ----------------- knobs for quick demos -----------------
-RECENCY_MONTHS = 6  # 0 = no time filter; try 1 or 6 for your T-CLDS story
+RECENCY_MONTHS = 0  # 0 = no time filter; try 1 or 6 for your T-CLDS story
 MIN_USER_INTER = 2  # drop users with <2 interactions (so each has train+test)
-SAMPLE_USERS = 300  # set None to keep all users
+SAMPLE_USERS = 500  # set None to keep all users
 TOPK_ITEMS = 5000  # set None to keep all items
 RNG_SEED = 42
 # ---------------------------------------------------------
+
+RAW = Path("data/raw/lastfm")
+OUT = Path(f"data/preprocessed/lastfm_small_m{RECENCY_MONTHS}")
+OUT.mkdir(parents=True, exist_ok=True)
+
 
 rng = np.random.default_rng(RNG_SEED)
 

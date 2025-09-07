@@ -91,7 +91,8 @@ def Test(dataset, Recmodel, epoch, cold=False, w=None):
         rating_list = []
         groundTrue_list = []
 
-        total_batch = len(users) // u_batch_size + 1
+        # total_batch = len(users) // u_batch_size + 1
+        total_batch = (len(users) + u_batch_size - 1) // u_batch_size
         for batch_users in utils.minibatch(users, batch_size=u_batch_size):
             allPos = dataset.getUserPosItems(batch_users)
             groundTrue = [testDict[u] for u in batch_users]
@@ -119,6 +120,12 @@ def Test(dataset, Recmodel, epoch, cold=False, w=None):
             groundTrue_list.append(groundTrue)
 
         assert total_batch == len(users_list)
+
+        if total_batch != len(users_list):
+            print(
+                f"[WARN] expected {total_batch} batches, got {len(users_list)} "
+                f"(users={len(users)}, u_batch_size={u_batch_size})"
+            )
         pre_results = [test_one_batch(x) for x in zip(rating_list, groundTrue_list)]
 
         for r in pre_results:
